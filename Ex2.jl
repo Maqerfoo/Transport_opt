@@ -30,6 +30,7 @@ struct Label
     visited::Array{Bool,1} # visited set
     cost::Int64 # cost
     prev# previous label, or the value "missing" if none exist
+    res_usage::Array{Float64,1}
 end
 
 function instance_reader(filename)
@@ -75,45 +76,40 @@ end
 function graph_constructor(inst)
     n_vertices = inst.n_tasks
     res_high = [inst.volume_capacity, inst.weight_capacity]
+    res_no = length(res_high)
     #n_arcs = n_vertices^2
-    A = [Edge[] for v in 1:n_vertices]
+    A = [Edge[] for v in 1:n_vertices+1]
     for i in 1:n_vertices, j in 1:n_vertices 
         if i!= j
             push!(A[i],Edge(i,j,-1,[inst.parts_volume[j], inst.parts_weight[j]]))
         end
     end
-    return Graph(collect(1:n_vertices),A), res_high
-end
-
-function is_equal(a::Label, b::Label)
-    #TODO: Complete this function
-end
-function is_less(a::Label, b::Label)
-    #TODO: Complete this function
+    #Add dummy edge
+    for i in 1:n_vertices
+        push!(A[i],Edge(i,n_vertices+1,0,zeros(res_no)))
+    end
+    return Graph(collect(1:n_vertices+1),A), res_high
 end
 
 function dominates(a::Label, b::Label)
-    if is_equal(a,b) || is_less(a,b)
-        return true
-    end
-    return false
+    return a.cost <= b.cost && a.res_usage <= b.res_usage && a.visited ⊆ b.visited
 end
 
 # Label constructor used to generate the first label
-function Label(source,V)
+function Label(source,V, res_no)
     v = zeros(Int64,length(V))
     v[source] = 1
-    return Label(source,1,v,0,missing)
+    return Label(source,1,v,0,missing, zeros(Float64,res_no))
 end
 
 # Extends a label from an edge toward the vertex v
-function extend(e::Edge,λ::Label,v::Int64)
-    if λ.visited[v]
+function extend(e::Edge,λ::Label,v::Int64,res_max)
+    if λ.visited[v] || any(λ.res_usage + e.res_usage .> res_max)
         return Nothing
     end
     visited = deepcopy(λ.visited)
     visited[v] = 1
-    return Label(v,λ.s+1,visited,λ.cost+e.cost,λ)
+    return Label(v,λ.s+1,visited,λ.cost+e.cost,λ,λ.res_usage+e.res_usage)
 end
 
 # Applies the dominance rule. Can be improved by keeping the labels sorted
@@ -144,13 +140,14 @@ function dominance(Λ::Array{Label,1},l::Label)
     return A, changed
 end
 
-function labeling_ERCSP(G,source)
+function labeling_ERCSP(G,source, res_max)
 
     # INITIALIZE-SINGLE-SOURCE
     # Generate the set of empty labels for each vertex in the graph
+    res_no = length(res_max)
     Λ = [Label[] for v in G.V]
     # Add the initialal label for the source
-    push!(Λ[source],Label(source,G.V))
+    push!(Λ[source],Label(source,G.V,res_no))
 
     # MAIN-BODY
     # The set of vertices to extend
@@ -164,7 +161,7 @@ function labeling_ERCSP(G,source)
         u = pop!(Q)
 
         # for each edge going out of the vertex
-        for e in G.adj[u]
+        for e in G.A[u]
             # get the next vertex
             v = e.to
             # flag to check if the labels changed
@@ -172,7 +169,7 @@ function labeling_ERCSP(G,source)
             # for each label of the vertex to extend
             for λ in Λ[u]
                 # extend the label
-                l=extend(e,λ,v)
+                l=extend(e,λ,v,res_max)
                 if l!=Nothing # we could extend
                     # apply the dominance rule
                     Λ[v], ch = dominance(Λ[v],l)
@@ -193,4 +190,5 @@ end
 
 inst = instance_reader("Data/instance1.txt")
 G, res_max = graph_constructor(inst)
+labels = labeling_ERCSP(G,1,res_max)
 
